@@ -1,0 +1,49 @@
+# A tag v<version> (the version in Cargo.toml) builds the library for macOS
+# arm64, static Linux x64 and Windows x64 and attaches them, with their checksums, to a
+# GitHub release of that tag.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, runner: macos-14 }
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04 }
+          - { target: x86_64-pc-windows-msvc, runner: windows-2022 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
+      - run: rustup target add ${{ matrix.target }}
+      - run: ./package.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "ripgrep 14.1.1"
